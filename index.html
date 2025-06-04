@@ -1,0 +1,304 @@
+Letölteni:
+npm init -y
+npm i express better-sqlite3 cors body-parser
+
+Futtatás: node index.js
+
+<!DOCTYPE html>
+<html lang="hu">
+<head>
+    <meta charset="UTF-8" />
+    <title>Számlák kezelése</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 20px;
+            background: #f8f9fa;
+        }
+        h1 {
+            color: #333;
+        }
+        form, table {
+            background: white;
+            padding: 20px;
+            margin-bottom: 30px;
+            border-radius: 6px;
+            box-shadow: 0 0 10px rgba(0,0,0,0.1);
+        }
+        label {
+            display: block;
+            margin-top: 10px;
+            font-weight: bold;
+            color: #555;
+        }
+        input, select {
+            width: 100%;
+            padding: 6px;
+            margin-top: 4px;
+            box-sizing: border-box;
+            border-radius: 4px;
+            border: 1px solid #ccc;
+        }
+        button {
+            margin-top: 15px;
+            padding: 10px 20px;
+            background: #28a745;
+            border: none;
+            color: white;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 16px;
+        }
+        button[disabled] {
+            background: #aaa;
+            cursor: not-allowed;
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 14px;
+        }
+        th, td {
+            padding: 10px;
+            border-bottom: 1px solid #ddd;
+            vertical-align: top;
+        }
+        th {
+            background: #343a40;
+            color: white;
+            text-align: left;
+        }
+        .stornozott {
+            color: red;
+            font-weight: bold;
+        }
+        .szamla-kulalak {
+            border: 1px solid #ccc;
+            padding: 10px;
+            margin-top: 10px;
+            background: #fff;
+            font-size: 14px;
+            line-height: 1.4;
+        }
+        .szamla-header {
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 10px;
+        }
+        .error {
+            color: red;
+            margin-top: 5px;
+        }
+    </style>
+</head>
+<body>
+    <h1>Számlák kezelése</h1>
+
+    <section>
+        <h2>Új vevő hozzáadása</h2>
+        <form id="vevoForm">
+            <label>Vevő neve (pl. Kovács Kft.): <input type="text" id="vevoNev" required></label>
+            <label>Címe (pl. Budapest, Fő utca 1.): <input type="text" id="vevoCim" required></label>
+            <label>Adószáma (pl. 12345678-1-12): <input type="text" id="vevoAdoszam" required></label>
+            <button type="submit">Vevő hozzáadása</button>
+            <div id="vevoError" class="error"></div>
+        </form>
+    </section>
+
+    <section>
+        <h2>Új számla hozzáadása</h2>
+        <form id="szamlaForm">
+            <label>Számla száma (pl. 004/2025): <input type="text" id="szamlaSzam" required></label>
+            <label>Számla kelte (YYYY-MM-DD): <input type="date" id="szamlaKelte" required></label>
+            <label>Teljesítés dátuma (YYYY-MM-DD): <input type="date" id="teljesitesDatum" required></label>
+            <label>Fizetési határidő (max számla kelte + 30 nap): <input type="date" id="fizetesiHatarido" required></label>
+            <label>Végösszeg (pl. 123000): <input type="number" id="vegosszeg" min="0" step="0.01" required></label>
+            <label>ÁFA százalék (pl. 27): <input type="number" id="afaSzazalek" min="0" max="100" required></label>
+            <label>Kiállító:
+                <select id="kialloSelect" required></select>
+            </label>
+            <label>Vevő:
+                <select id="vevoSelect" required></select>
+            </label>
+            <button type="submit">Számla hozzáadása</button>
+            <div id="szamlaError" class="error"></div>
+        </form>
+    </section>
+
+    <section>
+        <h2>Számlák listája</h2>
+        <div id="szamlakLista"></div>
+    </section>
+
+<script>
+    const API_URL = 'http://localhost:3000/api';
+
+    const vevoForm = document.getElementById('vevoForm');
+    const szamlaForm = document.getElementById('szamlaForm');
+    const kialloSelect = document.getElementById('kialloSelect');
+    const vevoSelect = document.getElementById('vevoSelect');
+    const szamlakLista = document.getElementById('szamlakLista');
+    const vevoError = document.getElementById('vevoError');
+    const szamlaError = document.getElementById('szamlaError');
+
+    async function fetchVevok() {
+        const res = await fetch(`${API_URL}/vevok`);
+        const vevok = await res.json();
+        kialloSelect.innerHTML = '';
+        vevoSelect.innerHTML = '';
+        vevok.forEach(v => {
+            const option1 = document.createElement('option');
+            option1.value = v.id;
+            option1.textContent = `${v.nev} (${v.adoszam})`;
+            kialloSelect.appendChild(option1);
+
+            const option2 = document.createElement('option');
+            option2.value = v.id;
+            option2.textContent = `${v.nev} (${v.adoszam})`;
+            vevoSelect.appendChild(option2);
+        });
+    }
+
+    async function fetchSzamlak() {
+        const res = await fetch(`${API_URL}/szamlak`);
+        const szamlak = await res.json();
+
+        if (szamlak.length === 0) {
+            szamlakLista.innerHTML = '<p>Nincs még számla.</p>';
+            return;
+        }
+
+        const table = document.createElement('table');
+        const thead = document.createElement('thead');
+        thead.innerHTML = `
+            <tr>
+                <th>Számla szám</th>
+                <th>Kelte</th>
+                <th>Teljesítés</th>
+                <th>Fizetési határidő</th>
+                <th>Végösszeg</th>
+                <th>ÁFA %</th>
+                <th>Kiállító</th>
+                <th>Vevő</th>
+                <th>Stornó</th>
+                <th>Művelet</th>
+            </tr>
+        `;
+        table.appendChild(thead);
+
+        const tbody = document.createElement('tbody');
+        szamlak.forEach(s => {
+            const tr = document.createElement('tr');
+            tr.className = s.stornozott ? 'stornozott' : '';
+            tr.innerHTML = `
+                <td>${s.szamla_szam}</td>
+                <td>${s.szamla_kelte}</td>
+                <td>${s.teljesites_datum}</td>
+                <td>${s.fizetesi_hatarido}</td>
+                <td>${s.vegosszeg.toFixed(2)}</td>
+                <td>${s.afa_szazalek}</td>
+                <td>${s.kiallo_nev}</td>
+                <td>${s.vevo_nev}</td>
+                <td>${s.stornozott ? 'Igen' : 'Nem'}</td>
+                <td>
+                    ${s.stornozott ? '' : `<button data-id="${s.id}" class="stornoBtn">Stornózás</button>`}
+                </td>
+            `;
+            tbody.appendChild(tr);
+        });
+        table.appendChild(tbody);
+
+        szamlakLista.innerHTML = '';
+        szamlakLista.appendChild(table);
+
+        document.querySelectorAll('.stornoBtn').forEach(btn => {
+            btn.addEventListener('click', async (e) => {
+                const id = e.target.getAttribute('data-id');
+                if (confirm('Biztosan stornózni akarja ezt a számlát?')) {
+                    try {
+                        const res = await fetch(`${API_URL}/szamlak/${id}/storno`, { method: 'POST' });
+                        if (res.ok) {
+                            alert('Számla stornózva.');
+                            fetchSzamlak();
+                        } else {
+                            const err = await res.json();
+                            alert('Hiba: ' + err.error);
+                        }
+                    } catch (error) {
+                        alert('Hálózati hiba: ' + error.message);
+                    }
+                }
+            });
+        });
+    }
+
+    vevoForm.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        vevoError.textContent = '';
+        const nev = document.getElementById('vevoNev').value.trim();
+        const cim = document.getElementById('vevoCim').value.trim();
+        const adoszam = document.getElementById('vevoAdoszam').value.trim();
+
+        try {
+            const res = await fetch(`${API_URL}/vevok`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ nev, cim, adoszam })
+            });
+            if (res.ok) {
+                await fetchVevok();
+                vevoForm.reset();
+                alert('Vevő hozzáadva');
+            } else {
+                const err = await res.json();
+                vevoError.textContent = err.error || 'Ismeretlen hiba';
+            }
+        } catch (error) {
+            vevoError.textContent = 'Hálózati hiba: ' + error.message;
+        }
+    });
+
+    szamlaForm.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        szamlaError.textContent = '';
+
+        const szamla_szam = document.getElementById('szamlaSzam').value.trim();
+        const szamla_kelte = document.getElementById('szamlaKelte').value;
+        const teljesites_datum = document.getElementById('teljesitesDatum').value;
+        const fizetesi_hatarido = document.getElementById('fizetesiHatarido').value;
+        const vegosszeg = parseFloat(document.getElementById('vegosszeg').value);
+        const afa_szazalek = parseInt(document.getElementById('afaSzazalek').value);
+        const kiallo_id = kialloSelect.value;
+        const vevo_id = vevoSelect.value;
+
+        if (!szamla_szam || !szamla_kelte || !teljesites_datum || !fizetesi_hatarido || isNaN(vegosszeg) || isNaN(afa_szazalek)) {
+            szamlaError.textContent = 'Minden mezőt kötelező kitölteni!';
+            return;
+        }
+
+        try {
+            const res = await fetch(`${API_URL}/szamlak`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ szamla_szam, szamla_kelte, teljesites_datum, fizetesi_hatarido, vegosszeg, afa_szazalek, kiallo_id, vevo_id })
+            });
+            if (res.ok) {
+                szamlaForm.reset();
+                alert('Számla hozzáadva');
+                fetchSzamlak();
+            } else {
+                const err = await res.json();
+                szamlaError.textContent = err.error || 'Ismeretlen hiba';
+            }
+        } catch (error) {
+            szamlaError.textContent = 'Hálózati hiba: ' + error.message;
+        }
+    });
+
+    // Inicializálás
+    fetchVevok();
+    fetchSzamlak();
+</script>
+
+</body>
+</html>
